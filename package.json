@@ -1,0 +1,41 @@
+{
+  "name": "recommendation-service",
+  "version": "1.0.0",
+  "description": "Vottery Recommendation Service powered by Shaped AI",
+  "type": "module",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js",
+    "test": "node --test",
+    "sync:initial": "node src/jobs/initialSync.js",
+    "model:create": "node src/jobs/createModels.js",
+    "model:status": "node src/jobs/checkModelStatus.js"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "cors": "^2.8.5",
+    "croner": "^8.1.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "helmet": "^8.0.0",
+    "pg": "^8.13.0",
+    "pino": "^9.4.0",
+    "pino-pretty": "^11.3.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "vottery",
+    "recommendation",
+    "shaped-ai",
+    "elections"
+  ],
+  "author": "Vottery",
+  "license": "UNLICENSED"
+}
