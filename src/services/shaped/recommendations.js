@@ -1,3 +1,5 @@
+
+//last code only showing active election above code
 /**
  * Recommendations Service
  * Integrates with Shaped AI for election recommendations
@@ -60,6 +62,12 @@ const getTrendingForNewUsers = async (limit) => {
  * ✅ FIXED: Now checks user voting history and uses Shaped /rank endpoint
  * ✅ NEW: Returns trending elections for new users instead of empty
  */
+/**
+ * Get elections for a user (personalized feed)
+ * ✅ FIXED: Now checks user voting history and uses Shaped /rank endpoint
+ * ✅ NEW: Returns trending elections for new users instead of empty
+ * ✅ NEW: Filters out ended elections
+ */
 export const getElectionsForYou = async (userId, options = {}) => {
   const { limit = 10, offset = 0, filters = {} } = options;
 
@@ -70,10 +78,11 @@ export const getElectionsForYou = async (userId, options = {}) => {
     if (!userId || userId === 'undefined' || userId === 'null') {
       logger.warn('No valid userId provided');
       const trendingElections = await getTrendingForNewUsers(limit);
+      const activeElections = filterActiveElections(trendingElections);
       return {
         success: true,
-        data: trendingElections,
-        pagination: { limit, offset, total: trendingElections.length },
+        data: activeElections,
+        pagination: { limit, offset, total: activeElections.length },
         message: 'Please login to get personalized recommendations. Showing trending elections.',
         is_new_user: true,
         user_vote_count: 0,
@@ -89,10 +98,11 @@ export const getElectionsForYou = async (userId, options = {}) => {
     if (userVoteCount === 0) {
       logger.info({ userId }, 'New user with no voting history - returning trending');
       const trendingElections = await getTrendingForNewUsers(limit);
+      const activeElections = filterActiveElections(trendingElections);
       return {
         success: true,
-        data: trendingElections,
-        pagination: { limit, offset, total: trendingElections.length },
+        data: activeElections,
+        pagination: { limit, offset, total: activeElections.length },
         message: 'You have not voted yet. Showing trending elections to get you started!',
         is_new_user: true,
         user_vote_count: 0,
@@ -101,25 +111,19 @@ export const getElectionsForYou = async (userId, options = {}) => {
     }
 
     // ✅ Step 3: User has history - get PERSONALIZED recommendations from Shaped AI
-    // Try using the rank endpoint first (for true personalization)
     try {
       const response = await shapedClient.client.post(`/engines/${ENGINE_NAME}/rank`, {
         user_id: String(userId),
-        limit: limit + offset,
+        limit: (limit + offset) * 2,
       });
 
       let results = response.data.results || response.data.items || [];
 
-      // Skip offset items
       if (offset > 0) {
         results = results.slice(offset);
       }
 
-      // Limit results
-      results = results.slice(0, limit);
-
-      // Transform results
-      const elections = results.map(item => ({
+      let elections = results.map(item => ({
         id: item.id || item.item_id,
         ...item.metadata,
         recommendation_source: 'shaped_ai',
@@ -127,12 +131,16 @@ export const getElectionsForYou = async (userId, options = {}) => {
         personalized_for_user: true,
       }));
 
+      // ✅ Filter to only show active elections
+      elections = filterActiveElections(elections);
+      elections = elections.slice(0, limit);
+
       logger.info({ userId, count: elections.length }, 'Personalized elections retrieved via /rank');
 
       return {
         success: true,
         data: elections,
-        pagination: { limit, offset, total: results.length },
+        pagination: { limit, offset, total: elections.length },
         message: `Based on your ${userVoteCount} vote${userVoteCount > 1 ? 's' : ''}, here are elections recommended for you.`,
         is_personalized: true,
         is_new_user: false,
@@ -140,11 +148,10 @@ export const getElectionsForYou = async (userId, options = {}) => {
         recommendation_type: 'personalized',
       };
     } catch (rankError) {
-      // If /rank fails, fall back to /query but still filter based on user
       logger.warn({ error: rankError.message }, 'Rank endpoint failed, using query fallback');
       
       const response = await shapedClient.client.post(`/engines/${ENGINE_NAME}/query`, {
-        query: `SELECT * FROM items LIMIT ${limit + offset}`,
+        query: `SELECT * FROM items LIMIT ${(limit + offset) * 2}`,
       });
 
       let results = response.data.results || [];
@@ -152,9 +159,8 @@ export const getElectionsForYou = async (userId, options = {}) => {
       if (offset > 0) {
         results = results.slice(offset);
       }
-      results = results.slice(0, limit);
 
-      const elections = results.map(item => ({
+      let elections = results.map(item => ({
         id: item.id,
         ...item.metadata,
         recommendation_source: 'shaped_ai',
@@ -162,10 +168,14 @@ export const getElectionsForYou = async (userId, options = {}) => {
         personalized_for_user: false,
       }));
 
+      // ✅ Filter to only show active elections
+      elections = filterActiveElections(elections);
+      elections = elections.slice(0, limit);
+
       return {
         success: true,
         data: elections,
-        pagination: { limit, offset, total: results.length },
+        pagination: { limit, offset, total: elections.length },
         message: `Based on your ${userVoteCount} vote${userVoteCount > 1 ? 's' : ''}, here are elections you might like.`,
         is_personalized: false,
         is_new_user: false,
@@ -176,13 +186,13 @@ export const getElectionsForYou = async (userId, options = {}) => {
   } catch (error) {
     logger.error({ error: error.message, userId }, 'Failed to get elections from Shaped');
     
-    // ✅ Check if it's a "user not found" error from Shaped
     if (error.response?.status === 404 || error.message?.includes('user')) {
       const trendingElections = await getTrendingForNewUsers(limit);
+      const activeElections = filterActiveElections(trendingElections);
       return {
         success: true,
-        data: trendingElections,
-        pagination: { limit, offset, total: trendingElections.length },
+        data: activeElections,
+        pagination: { limit, offset, total: activeElections.length },
         message: 'Showing trending elections. Vote to get personalized recommendations!',
         is_new_user: true,
         user_vote_count: 0,
@@ -190,10 +200,143 @@ export const getElectionsForYou = async (userId, options = {}) => {
       };
     }
     
-    // Fallback to database query for other errors
     return await getFallbackElections(limit, offset, filters);
   }
 };
+// export const getElectionsForYou = async (userId, options = {}) => {
+//   const { limit = 10, offset = 0, filters = {} } = options;
+
+//   try {
+//     logger.info({ userId, limit }, 'Getting elections for user');
+
+//     // ✅ Validate userId
+//     if (!userId || userId === 'undefined' || userId === 'null') {
+//       logger.warn('No valid userId provided');
+//       const trendingElections = await getTrendingForNewUsers(limit);
+//       return {
+//         success: true,
+//         data: trendingElections,
+//         pagination: { limit, offset, total: trendingElections.length },
+//         message: 'Please login to get personalized recommendations. Showing trending elections.',
+//         is_new_user: true,
+//         user_vote_count: 0,
+//         recommendation_type: 'trending',
+//       };
+//     }
+
+//     // ✅ Step 1: Check if user has voting history
+//     const userVoteCount = await getUserVoteCount(userId);
+//     logger.info({ userId, userVoteCount }, 'User vote count');
+
+//     // ✅ Step 2: If new user with no votes, return TRENDING elections with clear message
+//     if (userVoteCount === 0) {
+//       logger.info({ userId }, 'New user with no voting history - returning trending');
+//       const trendingElections = await getTrendingForNewUsers(limit);
+//       return {
+//         success: true,
+//         data: trendingElections,
+//         pagination: { limit, offset, total: trendingElections.length },
+//         message: 'You have not voted yet. Showing trending elections to get you started!',
+//         is_new_user: true,
+//         user_vote_count: 0,
+//         recommendation_type: 'trending',
+//       };
+//     }
+
+//     // ✅ Step 3: User has history - get PERSONALIZED recommendations from Shaped AI
+//     // Try using the rank endpoint first (for true personalization)
+//     try {
+//       const response = await shapedClient.client.post(`/engines/${ENGINE_NAME}/rank`, {
+//         user_id: String(userId),
+//         limit: limit + offset,
+//       });
+
+//       let results = response.data.results || response.data.items || [];
+
+//       // Skip offset items
+//       if (offset > 0) {
+//         results = results.slice(offset);
+//       }
+
+//       // Limit results
+//       results = results.slice(0, limit);
+
+//       // Transform results
+//       const elections = results.map(item => ({
+//         id: item.id || item.item_id,
+//         ...item.metadata,
+//         recommendation_source: 'shaped_ai',
+//         recommendation_type: 'personalized',
+//         personalized_for_user: true,
+//       }));
+
+//       logger.info({ userId, count: elections.length }, 'Personalized elections retrieved via /rank');
+
+//       return {
+//         success: true,
+//         data: elections,
+//         pagination: { limit, offset, total: results.length },
+//         message: `Based on your ${userVoteCount} vote${userVoteCount > 1 ? 's' : ''}, here are elections recommended for you.`,
+//         is_personalized: true,
+//         is_new_user: false,
+//         user_vote_count: userVoteCount,
+//         recommendation_type: 'personalized',
+//       };
+//     } catch (rankError) {
+//       // If /rank fails, fall back to /query but still filter based on user
+//       logger.warn({ error: rankError.message }, 'Rank endpoint failed, using query fallback');
+      
+//       const response = await shapedClient.client.post(`/engines/${ENGINE_NAME}/query`, {
+//         query: `SELECT * FROM items LIMIT ${limit + offset}`,
+//       });
+
+//       let results = response.data.results || [];
+
+//       if (offset > 0) {
+//         results = results.slice(offset);
+//       }
+//       results = results.slice(0, limit);
+
+//       const elections = results.map(item => ({
+//         id: item.id,
+//         ...item.metadata,
+//         recommendation_source: 'shaped_ai',
+//         recommendation_type: 'general',
+//         personalized_for_user: false,
+//       }));
+
+//       return {
+//         success: true,
+//         data: elections,
+//         pagination: { limit, offset, total: results.length },
+//         message: `Based on your ${userVoteCount} vote${userVoteCount > 1 ? 's' : ''}, here are elections you might like.`,
+//         is_personalized: false,
+//         is_new_user: false,
+//         user_vote_count: userVoteCount,
+//         recommendation_type: 'general',
+//       };
+//     }
+//   } catch (error) {
+//     logger.error({ error: error.message, userId }, 'Failed to get elections from Shaped');
+    
+//     // ✅ Check if it's a "user not found" error from Shaped
+//     if (error.response?.status === 404 || error.message?.includes('user')) {
+//       const trendingElections = await getTrendingForNewUsers(limit);
+//       return {
+//         success: true,
+//         data: trendingElections,
+//         pagination: { limit, offset, total: trendingElections.length },
+//         message: 'Showing trending elections. Vote to get personalized recommendations!',
+//         is_new_user: true,
+//         user_vote_count: 0,
+//         recommendation_type: 'trending',
+//       };
+//     }
+    
+//     // Fallback to database query for other errors
+//     return await getFallbackElections(limit, offset, filters);
+//   }
+// };
 
 /**
  * Get elections similar to a given election
@@ -643,6 +786,14 @@ export default {
   getAudienceForElection,
   checkEngineHealth,
 };
+
+
+
+
+
+
+
+
 // /**
 //  * Recommendations Service
 //  * Integrates with Shaped AI for election recommendations
