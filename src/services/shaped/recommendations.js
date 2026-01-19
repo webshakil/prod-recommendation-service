@@ -58,6 +58,27 @@ const getTrendingForNewUsers = async (limit) => {
 };
 
 /**
+ * ✅ Filter to only return active elections (not ended, not draft)
+ */
+const filterActiveElections = (elections) => {
+  const now = new Date();
+  
+  return elections.filter(election => {
+    const status = election.status?.toLowerCase();
+    if (status === 'draft' || status === 'cancelled') {
+      return false;
+    }
+    
+    const endDate = election.end_date ? new Date(election.end_date) : null;
+    if (endDate && endDate < now) {
+      return false;
+    }
+    
+    return true;
+  });
+};
+
+/**
  * Get elections for a user (personalized feed)
  * ✅ FIXED: Now checks user voting history and uses Shaped /rank endpoint
  * ✅ NEW: Returns trending elections for new users instead of empty
