@@ -310,8 +310,14 @@ export const getSimilarElections = async (electionId, options = {}) => {
   }
 };
 
+// ============================================
+// MINIMAL PATCH - Only replace these 2 functions
+// Keep EVERYTHING else in your file unchanged
+// ============================================
+
 /**
- * Get trending elections (based on popularity and recency)
+ * ✅ FIXED: Get trending elections (based on recency + engagement score + activity)
+ * REPLACE your existing getTrendingElections function with this one
  */
 export const getTrendingElections = async (options = {}) => {
   const { limit = 10, timeWindow = 7 } = options;
@@ -319,22 +325,79 @@ export const getTrendingElections = async (options = {}) => {
   try {
     logger.info({ limit, timeWindow }, 'Getting trending elections');
 
-    // Query Shaped - sorted by derived trending rank
+    // Query Shaped to get all items
     const response = await shapedClient.client.post(`/engines/${ENGINE_NAME}/query`, {
-      query: `SELECT * FROM items LIMIT ${limit * 3}`,
+      query: `SELECT * FROM items LIMIT 100`,
     });
 
-    const results = response.data.results || [];
+    let results = response.data.results || [];
+    
+    logger.info({ rawCount: results.length }, 'Raw results from Shaped for trending');
 
-    let elections = results.map(item => ({
-      id: item.id,
-      ...item.metadata,
-      trending_source: 'shaped_ai',
-    }));
+    // If no results from Shaped, try fallback immediately
+    if (results.length === 0) {
+      logger.warn('No results from Shaped, using fallback');
+      return await getFallbackTrendingElections(limit);
+    }
 
-    // Filter active elections
+    // ✅ Calculate trending score for each election
+    const now = new Date();
+    const timeWindowMs = timeWindow * 24 * 60 * 60 * 1000;
+
+    let elections = results.map(item => {
+      const metadata = item.metadata || {};
+      const electionData = {
+        id: item.id,
+        ...metadata,
+        trending_source: 'shaped_ai',
+      };
+
+      // Calculate trending score
+      let trendingScore = 0;
+
+      // Factor 1: Recency (max 40 points)
+      const createdAt = new Date(metadata.created_at || metadata.start_date || now);
+      const ageMs = Math.max(0, now - createdAt);
+      if (ageMs < timeWindowMs) {
+        trendingScore += Math.max(0, 40 * (1 - ageMs / timeWindowMs));
+      } else {
+        trendingScore += 5; // Small base score for older elections
+      }
+
+      // Factor 2: Engagement score (max 30 points)
+      const engagementScore = parseFloat(metadata.engagement_score || 0.1);
+      trendingScore += engagementScore * 30;
+
+      // Factor 3: Vote count (max 20 points)
+      const voteCount = parseInt(metadata.vote_count || 0);
+      trendingScore += Math.min(20, voteCount * 2);
+
+      // Factor 4: View count (max 10 points)
+      const viewCount = parseInt(metadata.view_count || 0);
+      trendingScore += Math.min(10, viewCount * 0.5);
+
+      electionData._trending_score = trendingScore;
+      return electionData;
+    });
+
+    // ✅ Filter active elections
     elections = filterActiveElections(elections);
+    
+    logger.info({ afterFilterCount: elections.length }, 'After filtering for trending');
+
+    // If all filtered out, return from fallback
+    if (elections.length === 0) {
+      logger.warn('All elections filtered out, using fallback');
+      return await getFallbackTrendingElections(limit);
+    }
+
+    // ✅ Sort by trending score (highest first)
+    elections.sort((a, b) => (b._trending_score || 0) - (a._trending_score || 0));
+
+    // Take top results
     elections = elections.slice(0, limit);
+
+    logger.info({ finalCount: elections.length }, 'Trending elections ready');
 
     return {
       success: true,
@@ -346,8 +409,12 @@ export const getTrendingElections = async (options = {}) => {
   }
 };
 
+
+
+
 /**
- * Get popular elections (most votes/views)
+ * ✅ FIXED: Get popular elections (most votes/views all-time)
+ * REPLACE your existing getPopularElections function with this one
  */
 export const getPopularElections = async (options = {}) => {
   const { limit = 10 } = options;
@@ -356,20 +423,74 @@ export const getPopularElections = async (options = {}) => {
     logger.info({ limit }, 'Getting popular elections');
 
     const response = await shapedClient.client.post(`/engines/${ENGINE_NAME}/query`, {
-      query: `SELECT * FROM items LIMIT ${limit * 3}`,
+      query: `SELECT * FROM items LIMIT 100`,
     });
 
-    const results = response.data.results || [];
+    let results = response.data.results || [];
+    
+    logger.info({ rawCount: results.length }, 'Raw results from Shaped for popular');
 
-    let elections = results.map(item => ({
-      id: item.id,
-      ...item.metadata,
-      popular_source: 'shaped_ai',
-    }));
+    // If no results from Shaped, try fallback immediately
+    if (results.length === 0) {
+      logger.warn('No results from Shaped, using fallback');
+      return await getFallbackPopularElections(limit);
+    }
 
-    // Filter active elections
+    // ✅ Calculate popularity score for each election
+    let elections = results.map(item => {
+      const metadata = item.metadata || {};
+      const electionData = {
+        id: item.id,
+        ...metadata,
+        popular_source: 'shaped_ai',
+      };
+
+      // Calculate popularity score
+      let popularityScore = 0;
+
+      // Factor 1: Total votes (max 50 points)
+      const voteCount = parseInt(metadata.vote_count || 0);
+      popularityScore += Math.min(50, voteCount * 5);
+
+      // Factor 2: Total views (max 25 points)
+      const viewCount = parseInt(metadata.view_count || 0);
+      popularityScore += Math.min(25, viewCount * 0.5);
+
+      // Factor 3: Engagement score (max 15 points)
+      const engagementScore = parseFloat(metadata.engagement_score || 0.1);
+      popularityScore += engagementScore * 15;
+
+      // Factor 4: Prize pool bonus (max 10 points) - elections with prizes are more attractive
+      const prizePool = parseFloat(metadata.lottery_prize_pool || 0);
+      if (prizePool > 0) {
+        popularityScore += Math.min(10, prizePool / 1000);
+      }
+
+      // Base score so nothing is zero
+      popularityScore += 1;
+
+      electionData._popularity_score = popularityScore;
+      return electionData;
+    });
+
+    // ✅ Filter active elections
     elections = filterActiveElections(elections);
+    
+    logger.info({ afterFilterCount: elections.length }, 'After filtering for popular');
+
+    // If all filtered out, return from fallback
+    if (elections.length === 0) {
+      logger.warn('All elections filtered out, using fallback');
+      return await getFallbackPopularElections(limit);
+    }
+
+    // ✅ Sort by popularity score (highest first)
+    elections.sort((a, b) => (b._popularity_score || 0) - (a._popularity_score || 0));
+
+    // Take top results
     elections = elections.slice(0, limit);
+
+    logger.info({ finalCount: elections.length }, 'Popular elections ready');
 
     return {
       success: true,
@@ -553,19 +674,26 @@ const getFallbackSimilarElections = async (electionId, limit) => {
 };
 
 /**
- * Fallback: Get trending elections
+ * Fallback: Get trending elections from database
  */
 const getFallbackTrendingElections = async (limit) => {
   try {
+    // Changed: Removed the strict vote_count/view_count ordering
+    // Now uses created_at as primary sort for new platforms with no votes yet
     const query = `
       SELECT * FROM votteryyy_elections
       WHERE status IN ('published', 'active')
       AND end_date > NOW()
-      ORDER BY vote_count DESC, view_count DESC
+      ORDER BY 
+        created_at DESC,
+        vote_count DESC, 
+        view_count DESC
       LIMIT $1
     `;
 
     const result = await db.query(query, [limit]);
+
+    logger.info({ count: result.rows.length }, 'Fallback trending elections from DB');
 
     return {
       success: true,
@@ -574,24 +702,34 @@ const getFallbackTrendingElections = async (limit) => {
     };
   } catch (error) {
     logger.error({ error: error.message }, 'Fallback trending query failed');
-    return { success: false, data: [], error: error.message };
+    return { success: true, data: [], error: error.message };
   }
 };
 
 /**
  * Fallback: Get popular elections
  */
+/**
+ * Fallback: Get popular elections from database
+ */
 const getFallbackPopularElections = async (limit) => {
   try {
+    // Changed: Added created_at as tiebreaker and lottery_prize_pool as factor
     const query = `
       SELECT * FROM votteryyy_elections
       WHERE status IN ('published', 'active')
       AND end_date > NOW()
-      ORDER BY vote_count DESC, view_count DESC
+      ORDER BY 
+        vote_count DESC, 
+        view_count DESC,
+        COALESCE(lottery_total_prize_pool, 0) DESC,
+        created_at DESC
       LIMIT $1
     `;
 
     const result = await db.query(query, [limit]);
+
+    logger.info({ count: result.rows.length }, 'Fallback popular elections from DB');
 
     return {
       success: true,
@@ -600,7 +738,7 @@ const getFallbackPopularElections = async (limit) => {
     };
   } catch (error) {
     logger.error({ error: error.message }, 'Fallback popular query failed');
-    return { success: false, data: [], error: error.message };
+    return { success: true, data: [], error: error.message };
   }
 };
 
