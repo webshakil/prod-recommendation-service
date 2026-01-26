@@ -13,10 +13,10 @@ import db from './utils/database.js';
 import { shapedClient, forceFlush } from './services/shaped/index.js';
 
 const app = express();
-
 app.use(
   cors({
     origin: "https://prod-client-omega.vercel.app",
+    credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: [
       "Content-Type",
@@ -24,10 +24,9 @@ app.use(
       "x-user-id",
       "x-user-data",
     ],
-    credentials: true,
   })
 );
-
+app.options("*", cors());
 // Middleware
 app.use(helmet());
 // app.use(cors({
