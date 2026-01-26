@@ -16,12 +16,25 @@ const app = express();
 
 // Middleware
 app.use(helmet());
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-user-data'],
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: "https://prod-client-omega.vercel.app",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "x-user-id",
+      "x-user-data",
+    ],
+    credentials: true,
+  })
+);
+// app.use(cors({
+//   origin: process.env.CORS_ORIGIN || '*',
+//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+//   allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-user-data'],
+//   credentials: true
+// }));
 app.use(express.json({ limit: '10mb' }));
 
 // Request logging
