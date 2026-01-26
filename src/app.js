@@ -14,8 +14,6 @@ import { shapedClient, forceFlush } from './services/shaped/index.js';
 
 const app = express();
 
-// Middleware
-app.use(helmet());
 app.use(
   cors({
     origin: "https://prod-client-omega.vercel.app",
@@ -29,6 +27,9 @@ app.use(
     credentials: true,
   })
 );
+
+// Middleware
+app.use(helmet());
 // app.use(cors({
 //   origin: process.env.CORS_ORIGIN || '*',
 //   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
